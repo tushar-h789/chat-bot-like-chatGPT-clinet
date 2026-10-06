@@ -11,6 +11,13 @@ export type Conversation = {
   updated_at: string;
 };
 
+export type AttachedFile = {
+  id: string;
+  name: string;
+  media_type: string;
+  size_bytes: number;
+};
+
 export type ChatMessage = {
   id: string;
   conversation_id: string;
@@ -19,6 +26,7 @@ export type ChatMessage = {
   status: string;
   created_at: string;
   updated_at: string;
+  files?: AttachedFile[];
 };
 
 export type ApiErrorBody = {

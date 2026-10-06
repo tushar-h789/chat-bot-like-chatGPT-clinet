@@ -4,14 +4,53 @@ import { takeSseEvents } from "@/lib/api/sse";
 type StreamChatInput = {
   content: string;
   conversationId: string | null;
+  fileIds?: string[];
   signal: AbortSignal;
   onConversation: (conversation: { id: string; title: string }) => void;
   onDelta: (text: string) => void;
 };
 
+type StreamHandlers = {
+  signal: AbortSignal;
+  onConversation?: (conversation: { id: string; title: string }) => void;
+  onDelta: (text: string) => void;
+};
+
 export async function streamChat(input: StreamChatInput): Promise<void> {
+  await postEventStream(
+    "/api/v1/chat",
+    {
+      content: input.content,
+      conversation_id: input.conversationId,
+      file_ids: input.fileIds ?? [],
+    },
+    input,
+  );
+}
+
+export async function streamRegenerate(input: {
+  conversationId: string;
+  messageId: string;
+  signal: AbortSignal;
+  onDelta: (text: string) => void;
+}): Promise<void> {
+  await postEventStream(
+    "/api/v1/chat/regenerate",
+    {
+      conversation_id: input.conversationId,
+      message_id: input.messageId,
+    },
+    input,
+  );
+}
+
+async function postEventStream(
+  path: string,
+  body: object,
+  input: StreamHandlers,
+): Promise<void> {
   const token = await getCsrfToken();
-  const response = await fetch(`${apiBaseUrl()}/api/v1/chat`, {
+  const response = await fetch(`${apiBaseUrl()}${path}`, {
     method: "POST",
     credentials: "include",
     signal: input.signal,
@@ -20,17 +59,14 @@ export async function streamChat(input: StreamChatInput): Promise<void> {
       "Content-Type": "application/json",
       "X-CSRF-Token": token,
     },
-    body: JSON.stringify({
-      content: input.content,
-      conversation_id: input.conversationId,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
+    const payload = (await response.json().catch(() => null)) as {
       error?: { message?: string };
     } | null;
-    throw new Error(body?.error?.message ?? "The message could not be sent.");
+    throw new Error(payload?.error?.message ?? "The message could not be sent.");
   }
 
   const reader = response.body?.getReader();
@@ -53,7 +89,7 @@ export async function streamChat(input: StreamChatInput): Promise<void> {
           message?: string;
         };
         if (event.event === "conversation" && payload.id && payload.title) {
-          input.onConversation({ id: payload.id, title: payload.title });
+          input.onConversation?.({ id: payload.id, title: payload.title });
         } else if (event.event === "delta" && payload.text) {
           input.onDelta(payload.text);
         } else if (event.event === "error") {

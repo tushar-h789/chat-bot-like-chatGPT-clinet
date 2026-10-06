@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { AssistantMarkdown } from "@/features/chat/assistant-markdown";
 import { logout } from "@/lib/api/auth";
-import { streamChat } from "@/lib/api/chat";
+import { streamChat, streamRegenerate } from "@/lib/api/chat";
+import { deleteFile, uploadFile } from "@/lib/api/files";
 import {
   createConversation,
   deleteConversation,
@@ -14,12 +15,49 @@ import {
   renameConversation,
 } from "@/lib/api/conversations";
 import { apiErrorMessage } from "@/lib/api/errors";
-import type { User } from "@/lib/api/types";
+import type { AttachedFile, User } from "@/lib/api/types";
 import { useUiStore } from "@/stores/ui-store";
 
 type ChatScreenProps = {
   user: User;
 };
+
+const TEXT_MEDIA_TYPES = new Set([
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+]);
+
+function attachmentNote(files: AttachedFile[]): string {
+  const readable = files.some((file) => TEXT_MEDIA_TYPES.has(file.media_type));
+  const unread = files.some((file) => !TEXT_MEDIA_TYPES.has(file.media_type));
+  if (readable && unread) {
+    return "Text files are sent to the model. Images and PDFs are not read yet.";
+  }
+  if (unread) {
+    return "Images and PDFs are not read yet.";
+  }
+  return "The model can read attached text files.";
+}
+
+function FileNames({ files }: { files: AttachedFile[] }) {
+  if (files.length === 0) {
+    return null;
+  }
+  return (
+    <ul className="mb-1 flex flex-wrap gap-1">
+      {files.map((file) => (
+        <li
+          className="rounded-full bg-zinc-700 px-2 py-0.5 text-xs"
+          key={file.id}
+        >
+          {file.name}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 function CopyReply({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -54,10 +92,15 @@ export function ChatScreen({ user }: ChatScreenProps) {
   );
   const selectConversation = useUiStore((state) => state.selectConversation);
   const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<AttachedFile[]>([]);
+  const [liveFiles, setLiveFiles] = useState<AttachedFile[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [liveUser, setLiveUser] = useState<string | null>(null);
   const [liveAssistant, setLiveAssistant] = useState("");
   const abortRef = useRef<AbortController | null>(null);
@@ -119,18 +162,47 @@ export function ChatScreen({ user }: ChatScreenProps) {
     onError: fail,
   });
 
-  async function startStream(content: string) {
+  async function attach(file: File) {
+    if (attachments.length >= 4) {
+      setError("A message can include at most 4 files.");
+      return;
+    }
+    setUploading(true);
+    setError(null);
+    try {
+      const saved = await uploadFile(file);
+      setAttachments((current) => [...current, saved].slice(0, 4));
+    } catch (caught) {
+      fail(caught);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function detach(fileId: string) {
+    setAttachments((current) => current.filter((file) => file.id !== fileId));
+    try {
+      await deleteFile(fileId);
+    } catch (caught) {
+      fail(caught);
+    }
+  }
+
+  async function startStream(content: string, files: AttachedFile[]) {
     const controller = new AbortController();
     abortRef.current = controller;
     setStreaming(true);
     setLiveUser(content);
+    setLiveFiles(files);
     setLiveAssistant("");
     setError(null);
     setDraft("");
+    setAttachments([]);
     try {
       await streamChat({
         content,
         conversationId: selectedConversationId,
+        fileIds: files.map((file) => file.id),
         signal: controller.signal,
         onConversation: (conversation) => {
           selectConversation(conversation.id);
@@ -169,7 +241,64 @@ export function ChatScreen({ user }: ChatScreenProps) {
       await queryClient.invalidateQueries({ queryKey: ["conversations"] });
       await queryClient.invalidateQueries({ queryKey: ["messages"] });
       setStreaming(false);
+      setRegeneratingId(null);
       setLiveUser(null);
+      setLiveFiles([]);
+      setLiveAssistant("");
+    }
+  }
+
+  async function startRegenerate(messageId: string) {
+    if (!selectedConversationId || streaming) {
+      return;
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setStreaming(true);
+    setRegeneratingId(messageId);
+    setLiveUser(null);
+    setLiveFiles([]);
+    setLiveAssistant("");
+    setError(null);
+    try {
+      await streamRegenerate({
+        conversationId: selectedConversationId,
+        messageId,
+        signal: controller.signal,
+        onDelta: (text) => {
+          pendingDeltaRef.current += text;
+          if (frameRef.current !== 0) {
+            return;
+          }
+          frameRef.current = window.requestAnimationFrame(() => {
+            frameRef.current = 0;
+            const chunk = pendingDeltaRef.current;
+            pendingDeltaRef.current = "";
+            if (chunk) {
+              setLiveAssistant((current) => current + chunk);
+            }
+          });
+        },
+      });
+    } catch (caught) {
+      if (!(caught instanceof DOMException && caught.name === "AbortError")) {
+        fail(caught);
+      }
+    } finally {
+      if (frameRef.current !== 0) {
+        window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = 0;
+      }
+      const leftover = pendingDeltaRef.current;
+      pendingDeltaRef.current = "";
+      if (leftover) {
+        setLiveAssistant((current) => current + leftover);
+      }
+      abortRef.current = null;
+      await queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      await queryClient.invalidateQueries({ queryKey: ["messages"] });
+      setStreaming(false);
+      setRegeneratingId(null);
       setLiveAssistant("");
     }
   }
@@ -326,33 +455,66 @@ export function ChatScreen({ user }: ChatScreenProps) {
               </p>
             ) : null}
             <ul className="flex flex-col gap-6">
-              {messages.data?.map((message) => {
+              {messages.data?.map((message, index, all) => {
                 const mine = message.role === "user";
+                const latestReply =
+                  !streaming &&
+                  index === all.length - 1 &&
+                  message.role === "assistant";
                 if (mine) {
                   return (
                     <li className="flex justify-end" key={message.id}>
-                      <div className="max-w-[85%] rounded-3xl bg-zinc-800 px-4 py-2.5 text-sm whitespace-pre-wrap">
-                        {message.content}
+                      <div className="max-w-[85%] rounded-3xl bg-zinc-800 px-4 py-2.5 text-sm">
+                        <FileNames files={message.files ?? []} />
+                        <p className="whitespace-pre-wrap">{message.content}</p>
                       </div>
                     </li>
                   );
                 }
-                if (message.content === "") {
+                const replacing = regeneratingId === message.id;
+                const text = replacing ? liveAssistant : message.content;
+                if (!replacing && text === "") {
                   return (
                     <li className="text-sm text-zinc-400" key={message.id}>
-                      The model did not reply.
+                      <p>The model did not reply.</p>
+                      {latestReply ? (
+                        <button
+                          className="mt-2 hover:text-zinc-200"
+                          type="button"
+                          onClick={() => void startRegenerate(message.id)}
+                        >
+                          Regenerate
+                        </button>
+                      ) : null}
                     </li>
                   );
                 }
                 return (
                   <li className="w-full" key={message.id}>
-                    <AssistantMarkdown text={message.content} />
-                    <div className="mt-2 flex items-center gap-3 text-xs text-zinc-500">
-                      {message.status === "cancelled" ? (
-                        <span>Stopped</span>
-                      ) : null}
-                      <CopyReply text={message.content} />
-                    </div>
+                    {text ? (
+                      <AssistantMarkdown text={text} />
+                    ) : (
+                      <p className="text-sm text-zinc-400" role="status">
+                        Thinking
+                      </p>
+                    )}
+                    {replacing ? null : (
+                      <div className="mt-2 flex items-center gap-3 text-xs text-zinc-500">
+                        {message.status === "cancelled" ? (
+                          <span>Stopped</span>
+                        ) : null}
+                        {text ? <CopyReply text={text} /> : null}
+                        {latestReply ? (
+                          <button
+                            className="hover:text-zinc-200"
+                            type="button"
+                            onClick={() => void startRegenerate(message.id)}
+                          >
+                            Regenerate
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
                   </li>
                 );
               })}
@@ -363,12 +525,13 @@ export function ChatScreen({ user }: ChatScreenProps) {
                   message.role === "user" && message.content === liveUser,
               ) ? (
                 <li className="flex justify-end">
-                  <div className="max-w-[85%] rounded-3xl bg-zinc-800 px-4 py-2.5 text-sm whitespace-pre-wrap">
-                    {liveUser}
+                  <div className="max-w-[85%] rounded-3xl bg-zinc-800 px-4 py-2.5 text-sm">
+                    <FileNames files={liveFiles} />
+                    <p className="whitespace-pre-wrap">{liveUser}</p>
                   </div>
                 </li>
               ) : null}
-              {streaming ? (
+              {streaming && regeneratingId === null ? (
                 <li className="w-full">
                   {liveAssistant ? (
                     <AssistantMarkdown text={liveAssistant} />
@@ -388,10 +551,10 @@ export function ChatScreen({ user }: ChatScreenProps) {
           onSubmit={(event) => {
             event.preventDefault();
             const content = draft.trim();
-            if (streaming || !content) {
+            if (streaming || uploading || !content) {
               return;
             }
-            void startStream(content);
+            void startStream(content, attachments);
           }}
         >
           <div className="mx-auto w-full max-w-3xl">
@@ -401,6 +564,31 @@ export function ChatScreen({ user }: ChatScreenProps) {
               </p>
             ) : null}
             <div className="rounded-3xl border border-white/15 bg-zinc-900 px-4 py-3 shadow-2xl">
+              {attachments.length > 0 ? (
+                <div className="mb-2">
+                  <ul className="flex flex-wrap gap-2">
+                    {attachments.map((file) => (
+                      <li
+                        className="flex items-center gap-2 rounded-full bg-zinc-800 px-3 py-1 text-xs"
+                        key={file.id}
+                      >
+                        <span>{file.name}</span>
+                        <button
+                          className="text-zinc-400 hover:text-zinc-100"
+                          type="button"
+                          aria-label={`Remove ${file.name}`}
+                          onClick={() => void detach(file.id)}
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-xs text-zinc-500">
+                    {attachmentNote(attachments)}
+                  </p>
+                </div>
+              ) : null}
               <label className="sr-only" htmlFor="composer">
                 Message
               </label>
@@ -419,9 +607,32 @@ export function ChatScreen({ user }: ChatScreenProps) {
                 }}
               />
               <div className="mt-2 flex items-center justify-between gap-3">
-                <p className="text-xs text-zinc-500">
-                  Enter to send. Shift+Enter for a new line.
-                </p>
+                <div className="flex items-center gap-3">
+                  <input
+                    ref={fileInputRef}
+                    className="hidden"
+                    type="file"
+                    accept=".txt,.md,.csv,.json,.pdf,.png,.jpg,.jpeg,.webp,.gif"
+                    onChange={(event) => {
+                      const chosen = event.target.files?.[0];
+                      event.target.value = "";
+                      if (chosen) {
+                        void attach(chosen);
+                      }
+                    }}
+                  />
+                  <button
+                    className="rounded-full border border-white/15 px-3 py-1 text-xs disabled:opacity-40"
+                    type="button"
+                    disabled={streaming || uploading || attachments.length >= 4}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {uploading ? "Uploading" : "Attach"}
+                  </button>
+                  <p className="text-xs text-zinc-500">
+                    Enter to send. Shift+Enter for a new line.
+                  </p>
+                </div>
                 {streaming ? (
                   <button
                     className="rounded-full bg-white px-4 py-2 text-sm font-medium text-zinc-950"
@@ -434,7 +645,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
                   <button
                     className="rounded-full bg-white px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-40"
                     type="submit"
-                    disabled={draft.trim() === ""}
+                    disabled={draft.trim() === "" || uploading}
                   >
                     Send
                   </button>
