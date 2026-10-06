@@ -1,5 +1,6 @@
 import { apiBaseUrl, getCsrfToken } from "@/lib/api/client";
 import { takeSseEvents } from "@/lib/api/sse";
+import type { ToolCall } from "@/lib/api/types";
 
 type StreamChatInput = {
   content: string;
@@ -9,12 +10,14 @@ type StreamChatInput = {
   signal: AbortSignal;
   onConversation: (conversation: { id: string; title: string }) => void;
   onDelta: (text: string) => void;
+  onTool?: (call: ToolCall) => void;
 };
 
 type StreamHandlers = {
   signal: AbortSignal;
   onConversation?: (conversation: { id: string; title: string }) => void;
   onDelta: (text: string) => void;
+  onTool?: (call: ToolCall) => void;
 };
 
 export async function streamChat(input: StreamChatInput): Promise<void> {
@@ -35,6 +38,7 @@ export async function streamRegenerate(input: {
   messageId: string;
   signal: AbortSignal;
   onDelta: (text: string) => void;
+  onTool?: (call: ToolCall) => void;
 }): Promise<void> {
   await postEventStream(
     "/api/v1/chat/regenerate",
@@ -89,9 +93,18 @@ async function postEventStream(
           title?: string;
           text?: string;
           message?: string;
+          name?: string;
+          arguments?: Record<string, unknown>;
+          result?: string;
         };
         if (event.event === "conversation" && payload.id && payload.title) {
           input.onConversation?.({ id: payload.id, title: payload.title });
+        } else if (event.event === "tool" && payload.name) {
+          input.onTool?.({
+            name: payload.name,
+            arguments: payload.arguments ?? {},
+            result: payload.result ?? "",
+          });
         } else if (event.event === "delta" && payload.text) {
           input.onDelta(payload.text);
         } else if (event.event === "error") {

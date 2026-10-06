@@ -4,7 +4,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { AssistantMarkdown } from "@/features/chat/assistant-markdown";
+import { toolLabel } from "@/features/chat/tools";
+import {
+  speak,
+  startDictation,
+  stopSpeaking,
+  type Dictation,
+} from "@/features/chat/voice";
 import { logout } from "@/lib/api/auth";
+import { getUsage } from "@/lib/api/usage";
 import { streamChat, streamRegenerate } from "@/lib/api/chat";
 import { deleteFile, uploadFile } from "@/lib/api/files";
 import {
@@ -15,7 +23,7 @@ import {
   renameConversation,
 } from "@/lib/api/conversations";
 import { apiErrorMessage } from "@/lib/api/errors";
-import type { AttachedFile, User } from "@/lib/api/types";
+import type { AttachedFile, ToolCall, User } from "@/lib/api/types";
 import { useUiStore } from "@/stores/ui-store";
 
 type ChatScreenProps = {
@@ -36,23 +44,24 @@ const IMAGE_MEDIA_TYPES = new Set([
 ]);
 
 function attachmentNote(files: AttachedFile[]): string {
-  const hasText = files.some((file) => TEXT_MEDIA_TYPES.has(file.media_type));
-  const hasImage = files.some((file) => IMAGE_MEDIA_TYPES.has(file.media_type));
-  const hasPdf = files.some((file) => file.media_type === "application/pdf");
-  const read = [
-    hasText ? "text" : "",
-    hasImage ? "images" : "",
+  const parts = [
+    files.some((file) => TEXT_MEDIA_TYPES.has(file.media_type)) ? "text" : "",
+    files.some((file) => IMAGE_MEDIA_TYPES.has(file.media_type)) ? "images" : "",
+    files.some((file) => file.media_type === "application/pdf") ? "PDFs" : "",
   ].filter(Boolean);
-  if (read.length === 0) {
-    return "PDFs are not read yet.";
+  if (parts.length === 0) {
+    return "";
   }
-  const sentence =
-    read.length === 2
-      ? "The model can read attached text and images."
-      : hasImage
-        ? "The model can read attached images."
-        : "The model can read attached text files.";
-  return hasPdf ? `${sentence} PDFs are not read yet.` : sentence;
+  const listed =
+    parts.length === 1
+      ? parts[0]
+      : parts.length === 2
+        ? `${parts[0]} and ${parts[1]}`
+        : `${parts[0]}, ${parts[1]}, and ${parts[2]}`;
+  if (parts.length === 1 && parts[0] === "text") {
+    return "The model can read attached text files.";
+  }
+  return `The model can read attached ${listed}.`;
 }
 
 function FileNames({ files }: { files: AttachedFile[] }) {
@@ -67,6 +76,22 @@ function FileNames({ files }: { files: AttachedFile[] }) {
           key={file.id}
         >
           {file.name}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ToolNotes({ calls }: { calls: ToolCall[] }) {
+  if (calls.length === 0) {
+    return null;
+  }
+  return (
+    <ul className="mb-2 flex flex-col gap-1">
+      {calls.map((call, index) => (
+        <li className="text-xs text-zinc-400" key={`${call.name}-${index}`}>
+          {toolLabel(call.name)}
+          {call.result ? ` · ${call.result}` : ""}
         </li>
       ))}
     </ul>
@@ -119,7 +144,12 @@ export function ChatScreen({ user }: ChatScreenProps) {
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [liveUser, setLiveUser] = useState<string | null>(null);
   const [liveAssistant, setLiveAssistant] = useState("");
+  const [liveTools, setLiveTools] = useState<ToolCall[]>([]);
+  const [listening, setListening] = useState(false);
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const recognitionRef = useRef<Dictation | null>(null);
+  const draftBaseRef = useRef("");
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pendingDeltaRef = useRef("");
   const frameRef = useRef(0);
@@ -127,6 +157,10 @@ export function ChatScreen({ user }: ChatScreenProps) {
   const conversations = useQuery({
     queryKey: ["conversations"],
     queryFn: listConversations,
+  });
+  const usage = useQuery({
+    queryKey: ["usage"],
+    queryFn: getUsage,
   });
   const messages = useQuery({
     queryKey: ["messages", selectedConversationId],
@@ -204,7 +238,64 @@ export function ChatScreen({ user }: ChatScreenProps) {
     }
   }
 
+  function stopDictation() {
+    const current = recognitionRef.current;
+    recognitionRef.current = null;
+    current?.stop();
+    setListening(false);
+  }
+
+  function toggleMic() {
+    if (listening) {
+      stopDictation();
+      return;
+    }
+    stopSpeaking();
+    setSpeakingId(null);
+    draftBaseRef.current = draft.trim() ? `${draft.trimEnd()} ` : "";
+    const session = startDictation({
+      onChange: (text) => setDraft(`${draftBaseRef.current}${text}`.trim()),
+      onEnd: () => {
+        recognitionRef.current = null;
+        setListening(false);
+      },
+      onError: (message) => setError(message),
+    });
+    if (session === null) {
+      setError("Voice input is not available in this browser.");
+      return;
+    }
+    recognitionRef.current = session;
+    setListening(true);
+    setError(null);
+  }
+
+  function toggleSpeak(messageId: string, text: string) {
+    if (speakingId === messageId) {
+      stopSpeaking();
+      setSpeakingId(null);
+      return;
+    }
+    stopDictation();
+    const result = speak(text, () => {
+      setSpeakingId((current) => (current === messageId ? null : current));
+    });
+    if (result === "unavailable") {
+      setError("Voice output is not available in this browser.");
+      return;
+    }
+    if (result === "empty") {
+      setError("There is nothing to read.");
+      return;
+    }
+    setSpeakingId(messageId);
+    setError(null);
+  }
+
   async function startStream(content: string, files: AttachedFile[], search: boolean) {
+    stopDictation();
+    stopSpeaking();
+    setSpeakingId(null);
     const controller = new AbortController();
     abortRef.current = controller;
     setStreaming(true);
@@ -212,6 +303,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
     setLiveFiles(files);
     setLiveSearch(search);
     setLiveAssistant("");
+    setLiveTools([]);
     setError(null);
     setDraft("");
     setAttachments([]);
@@ -240,6 +332,9 @@ export function ChatScreen({ user }: ChatScreenProps) {
             }
           });
         },
+        onTool: (call) => {
+          setLiveTools((current) => [...current, call]);
+        },
       });
     } catch (caught) {
       if (!(caught instanceof DOMException && caught.name === "AbortError")) {
@@ -258,12 +353,14 @@ export function ChatScreen({ user }: ChatScreenProps) {
       abortRef.current = null;
       await queryClient.invalidateQueries({ queryKey: ["conversations"] });
       await queryClient.invalidateQueries({ queryKey: ["messages"] });
+      await queryClient.invalidateQueries({ queryKey: ["usage"] });
       setStreaming(false);
       setRegeneratingId(null);
       setLiveUser(null);
       setLiveFiles([]);
       setLiveSearch(false);
       setLiveAssistant("");
+      setLiveTools([]);
     }
   }
 
@@ -271,6 +368,9 @@ export function ChatScreen({ user }: ChatScreenProps) {
     if (!selectedConversationId || streaming) {
       return;
     }
+    stopDictation();
+    stopSpeaking();
+    setSpeakingId(null);
     const controller = new AbortController();
     abortRef.current = controller;
     setStreaming(true);
@@ -278,6 +378,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
     setLiveUser(null);
     setLiveFiles([]);
     setLiveAssistant("");
+    setLiveTools([]);
     setError(null);
     try {
       await streamRegenerate({
@@ -298,6 +399,9 @@ export function ChatScreen({ user }: ChatScreenProps) {
             }
           });
         },
+        onTool: (call) => {
+          setLiveTools((current) => [...current, call]);
+        },
       });
     } catch (caught) {
       if (!(caught instanceof DOMException && caught.name === "AbortError")) {
@@ -316,11 +420,23 @@ export function ChatScreen({ user }: ChatScreenProps) {
       abortRef.current = null;
       await queryClient.invalidateQueries({ queryKey: ["conversations"] });
       await queryClient.invalidateQueries({ queryKey: ["messages"] });
+      await queryClient.invalidateQueries({ queryKey: ["usage"] });
       setStreaming(false);
       setRegeneratingId(null);
       setLiveAssistant("");
+      setLiveTools([]);
     }
   }
+
+  useEffect(() => {
+    setListening(false);
+    setSpeakingId(null);
+    return () => {
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+      stopSpeaking();
+    };
+  }, [selectedConversationId]);
 
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -328,7 +444,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
       return;
     }
     scroller.scrollTo?.({ top: scroller.scrollHeight });
-  }, [messages.data, liveAssistant, liveUser, streaming]);
+  }, [messages.data, liveAssistant, liveUser, liveTools, streaming]);
 
   const signOut = useMutation({
     mutationFn: logout,
@@ -336,6 +452,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
       selectConversation(null);
       queryClient.removeQueries({ queryKey: ["conversations"] });
       queryClient.removeQueries({ queryKey: ["messages"] });
+      queryClient.removeQueries({ queryKey: ["usage"] });
       queryClient.setQueryData(["me"], null);
     },
     onError: fail,
@@ -389,6 +506,12 @@ export function ChatScreen({ user }: ChatScreenProps) {
         </nav>
         <div className="border-t border-white/10 p-3 pb-16">
           <p className="truncate text-xs text-zinc-400">{user.email}</p>
+          {usage.data?.daily_token_limit != null ? (
+            <p className="mt-1 text-xs text-zinc-500">
+              {usage.data.tokens_today.toLocaleString("en-US")} /{" "}
+              {usage.data.daily_token_limit.toLocaleString("en-US")} tokens today
+            </p>
+          ) : null}
           <button
             className="mt-2 text-sm text-zinc-200 underline-offset-4 hover:underline"
             type="button"
@@ -495,7 +618,8 @@ export function ChatScreen({ user }: ChatScreenProps) {
                 }
                 const replacing = regeneratingId === message.id;
                 const text = replacing ? liveAssistant : message.content;
-                if (!replacing && text === "") {
+                const calls = replacing ? liveTools : (message.tool_calls ?? []);
+                if (!replacing && text === "" && calls.length === 0) {
                   return (
                     <li className="text-sm text-zinc-400" key={message.id}>
                       <p>The model did not reply.</p>
@@ -513,12 +637,15 @@ export function ChatScreen({ user }: ChatScreenProps) {
                 }
                 return (
                   <li className="w-full" key={message.id}>
+                    <ToolNotes calls={calls} />
                     {text ? (
                       <AssistantMarkdown text={text} />
-                    ) : (
+                    ) : replacing ? (
                       <p className="text-sm text-zinc-400" role="status">
                         Thinking
                       </p>
+                    ) : (
+                      <p className="text-sm text-zinc-400">The model did not reply.</p>
                     )}
                     {replacing ? null : (
                       <div className="mt-2 flex items-center gap-3 text-xs text-zinc-500">
@@ -526,6 +653,15 @@ export function ChatScreen({ user }: ChatScreenProps) {
                           <span>Stopped</span>
                         ) : null}
                         {text ? <CopyReply text={text} /> : null}
+                        {text ? (
+                          <button
+                            className="hover:text-zinc-200"
+                            type="button"
+                            onClick={() => toggleSpeak(message.id, text)}
+                          >
+                            {speakingId === message.id ? "Stop voice" : "Speak"}
+                          </button>
+                        ) : null}
                         {latestReply ? (
                           <button
                             className="hover:text-zinc-200"
@@ -558,6 +694,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
               ) : null}
               {streaming && regeneratingId === null ? (
                 <li className="w-full">
+                  <ToolNotes calls={liveTools} />
                   {liveAssistant ? (
                     <AssistantMarkdown text={liveAssistant} />
                   ) : (
@@ -622,7 +759,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
                 className="max-h-48 min-h-12 w-full resize-none bg-transparent text-sm outline-none"
                 placeholder="Message"
                 value={draft}
-                disabled={streaming}
+                disabled={streaming || listening}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
@@ -666,6 +803,19 @@ export function ChatScreen({ user }: ChatScreenProps) {
                     onClick={() => setSearchOn((current) => !current)}
                   >
                     Search
+                  </button>
+                  <button
+                    className={
+                      listening
+                        ? "rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-950 disabled:opacity-40"
+                        : "rounded-full border border-white/15 px-3 py-1 text-xs disabled:opacity-40"
+                    }
+                    type="button"
+                    aria-pressed={listening}
+                    disabled={streaming}
+                    onClick={toggleMic}
+                  >
+                    {listening ? "Listening" : "Mic"}
                   </button>
                   <p className="text-xs text-zinc-500">
                     Enter to send. Shift+Enter for a new line.

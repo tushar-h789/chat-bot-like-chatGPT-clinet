@@ -18,6 +18,12 @@ export type AttachedFile = {
   size_bytes: number;
 };
 
+export type ToolCall = {
+  name: string;
+  arguments: Record<string, unknown>;
+  result: string;
+};
+
 export type ChatMessage = {
   id: string;
   conversation_id: string;
@@ -28,6 +34,7 @@ export type ChatMessage = {
   updated_at: string;
   files?: AttachedFile[];
   web_search?: boolean;
+  tool_calls?: ToolCall[];
 };
 
 export type ApiErrorBody = {
