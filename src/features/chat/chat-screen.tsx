@@ -28,17 +28,31 @@ const TEXT_MEDIA_TYPES = new Set([
   "text/csv",
   "application/json",
 ]);
+const IMAGE_MEDIA_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
 
 function attachmentNote(files: AttachedFile[]): string {
-  const readable = files.some((file) => TEXT_MEDIA_TYPES.has(file.media_type));
-  const unread = files.some((file) => !TEXT_MEDIA_TYPES.has(file.media_type));
-  if (readable && unread) {
-    return "Text files are sent to the model. Images and PDFs are not read yet.";
+  const hasText = files.some((file) => TEXT_MEDIA_TYPES.has(file.media_type));
+  const hasImage = files.some((file) => IMAGE_MEDIA_TYPES.has(file.media_type));
+  const hasPdf = files.some((file) => file.media_type === "application/pdf");
+  const read = [
+    hasText ? "text" : "",
+    hasImage ? "images" : "",
+  ].filter(Boolean);
+  if (read.length === 0) {
+    return "PDFs are not read yet.";
   }
-  if (unread) {
-    return "Images and PDFs are not read yet.";
-  }
-  return "The model can read attached text files.";
+  const sentence =
+    read.length === 2
+      ? "The model can read attached text and images."
+      : hasImage
+        ? "The model can read attached images."
+        : "The model can read attached text files.";
+  return hasPdf ? `${sentence} PDFs are not read yet.` : sentence;
 }
 
 function FileNames({ files }: { files: AttachedFile[] }) {
