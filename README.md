@@ -20,6 +20,6 @@ npm test
 npm run build
 ```
 
-The dev server runs at http://localhost:3000.
+The dev server runs at http://localhost:3000. Open that host, not `127.0.0.1`, so the session cookie stays on `localhost` with the API.
 
-Chat, authentication, and streaming are later phases. The home page only confirms the scaffold.
+The page signs in through the API, then lists, renames, and deletes conversations and saves messages. Model replies and streaming are later phases. The browser never receives the OpenAI key.
