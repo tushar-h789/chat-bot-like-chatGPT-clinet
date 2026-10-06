@@ -59,4 +59,10 @@ describe("apiErrorMessage", () => {
 
     expect(apiErrorMessage(error)).toBe("Invalid email or password.");
   });
+
+  it("replaces a dropped connection with a clear sentence", () => {
+    expect(apiErrorMessage(new TypeError("network error"))).toBe(
+      "The model could not be reached. Try again.",
+    );
+  });
 });

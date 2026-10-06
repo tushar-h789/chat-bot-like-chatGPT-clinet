@@ -39,28 +39,41 @@ export async function streamChat(input: StreamChatInput): Promise<void> {
   }
   const decoder = new TextDecoder();
   let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-    const parsed = takeSseEvents(buffer);
-    buffer = parsed.rest;
-    for (const event of parsed.events) {
-      const payload = JSON.parse(event.data) as {
-        id?: string;
-        title?: string;
-        text?: string;
-        message?: string;
-      };
-      if (event.event === "conversation" && payload.id && payload.title) {
-        input.onConversation({ id: payload.id, title: payload.title });
-      } else if (event.event === "delta" && payload.text) {
-        input.onDelta(payload.text);
-      } else if (event.event === "error") {
-        throw new Error(payload.message ?? "The model failed to respond.");
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+      const parsed = takeSseEvents(buffer);
+      buffer = parsed.rest;
+      for (const event of parsed.events) {
+        const payload = JSON.parse(event.data) as {
+          id?: string;
+          title?: string;
+          text?: string;
+          message?: string;
+        };
+        if (event.event === "conversation" && payload.id && payload.title) {
+          input.onConversation({ id: payload.id, title: payload.title });
+        } else if (event.event === "delta" && payload.text) {
+          input.onDelta(payload.text);
+        } else if (event.event === "error") {
+          throw new Error(payload.message ?? "The model failed to respond.");
+        }
+      }
+      if (done) {
+        break;
       }
     }
-    if (done) {
-      break;
+  } catch (caught) {
+    if (caught instanceof DOMException && caught.name === "AbortError") {
+      throw caught;
     }
+    if (
+      caught instanceof TypeError &&
+      /network error|failed to fetch|load failed/i.test(caught.message)
+    ) {
+      throw new Error("The model could not be reached. Try again.");
+    }
+    throw caught;
   }
 }

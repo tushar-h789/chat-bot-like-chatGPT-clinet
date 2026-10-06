@@ -22,4 +22,4 @@ npm run build
 
 The dev server runs at http://localhost:3000. Open that host, not `127.0.0.1`, so the session cookie stays on `localhost` with the API.
 
-The page signs in through the API, then lists, renames, and deletes conversations. Send posts to `POST /api/v1/chat` with `fetch` and shows the reply as it arrives. Stop aborts that request. Axios still handles the JSON routes. The browser never receives the OpenAI key.
+The page signs in through the API, then lists, renames, and deletes conversations. Send posts to `POST /api/v1/chat` with `fetch` and shows the reply as it arrives. Assistant text renders as Markdown, and fenced code is highlighted. Stop aborts that request. Axios still handles the JSON routes. The browser never receives the OpenAI or Gemini key.

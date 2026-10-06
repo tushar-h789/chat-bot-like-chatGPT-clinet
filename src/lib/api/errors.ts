@@ -10,6 +10,9 @@ export function apiErrorMessage(error: unknown): string {
     }
   }
   if (error instanceof Error && error.message) {
+    if (/^(network error|failed to fetch|load failed)$/i.test(error.message)) {
+      return "The model could not be reached. Try again.";
+    }
     return error.message;
   }
   return "Something went wrong.";

@@ -1,8 +1,9 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { AssistantMarkdown } from "@/features/chat/assistant-markdown";
 import { logout } from "@/lib/api/auth";
 import { streamChat } from "@/lib/api/chat";
 import {
@@ -20,6 +21,30 @@ type ChatScreenProps = {
   user: User;
 };
 
+function CopyReply({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      return;
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <button
+      className="hover:text-zinc-200"
+      type="button"
+      onClick={() => void copy()}
+    >
+      {copied ? "Copied" : "Copy reply"}
+    </button>
+  );
+}
+
 export function ChatScreen({ user }: ChatScreenProps) {
   const queryClient = useQueryClient();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
@@ -36,6 +61,9 @@ export function ChatScreen({ user }: ChatScreenProps) {
   const [liveUser, setLiveUser] = useState<string | null>(null);
   const [liveAssistant, setLiveAssistant] = useState("");
   const abortRef = useRef<AbortController | null>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const pendingDeltaRef = useRef("");
+  const frameRef = useRef(0);
 
   const conversations = useQuery({
     queryKey: ["conversations"],
@@ -109,7 +137,18 @@ export function ChatScreen({ user }: ChatScreenProps) {
           void queryClient.invalidateQueries({ queryKey: ["conversations"] });
         },
         onDelta: (text) => {
-          setLiveAssistant((current) => current + text);
+          pendingDeltaRef.current += text;
+          if (frameRef.current !== 0) {
+            return;
+          }
+          frameRef.current = window.requestAnimationFrame(() => {
+            frameRef.current = 0;
+            const chunk = pendingDeltaRef.current;
+            pendingDeltaRef.current = "";
+            if (chunk) {
+              setLiveAssistant((current) => current + chunk);
+            }
+          });
         },
       });
     } catch (caught) {
@@ -117,14 +156,31 @@ export function ChatScreen({ user }: ChatScreenProps) {
         fail(caught);
       }
     } finally {
+      if (frameRef.current !== 0) {
+        window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = 0;
+      }
+      const leftover = pendingDeltaRef.current;
+      pendingDeltaRef.current = "";
+      if (leftover) {
+        setLiveAssistant((current) => current + leftover);
+      }
       abortRef.current = null;
+      await queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      await queryClient.invalidateQueries({ queryKey: ["messages"] });
       setStreaming(false);
       setLiveUser(null);
       setLiveAssistant("");
-      await queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      await queryClient.invalidateQueries({ queryKey: ["messages"] });
     }
   }
+
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) {
+      return;
+    }
+    scroller.scrollTo?.({ top: scroller.scrollHeight });
+  }, [messages.data, liveAssistant, liveUser, streaming]);
 
   const signOut = useMutation({
     mutationFn: logout,
@@ -138,7 +194,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
   });
 
   return (
-    <div className="flex min-h-dvh">
+    <div className="flex h-dvh">
       <aside
         className={`${sidebarOpen ? "flex" : "hidden"} absolute inset-y-0 left-0 z-10 w-72 flex-col border-r border-white/10 bg-zinc-950 md:static md:flex`}
       >
@@ -197,7 +253,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
       </aside>
 
       <section className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+        <header className="relative z-10 flex shrink-0 items-center gap-3 border-b border-white/10 bg-zinc-950 px-4 py-3">
           <button
             className="rounded-md border border-white/10 px-2 py-1 text-xs md:hidden"
             type="button"
@@ -258,56 +314,77 @@ export function ChatScreen({ user }: ChatScreenProps) {
           )}
         </header>
 
-        <div className="flex-1 space-y-3 overflow-y-auto px-4 py-6">
-          {selected && messages.data?.length === 0 && !streaming ? (
-            <p className="text-sm text-zinc-500">
-              Send a message to start this conversation.
-            </p>
-          ) : null}
-          <ul className="space-y-3">
-            {messages.data
-              ?.filter(
-                (message) =>
-                  !(message.role === "assistant" && message.content === ""),
-              )
-              .map((message) => {
+        <div ref={scrollerRef} className="flex-1 overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
+            {!streaming &&
+            (!selected || messages.data?.length === 0) &&
+            !messages.isLoading ? (
+              <p className="py-16 text-center text-2xl font-medium tracking-tight text-zinc-200">
+                {selected
+                  ? "Send a message to start this conversation."
+                  : "What can I help with?"}
+              </p>
+            ) : null}
+            <ul className="flex flex-col gap-6">
+              {messages.data?.map((message) => {
                 const mine = message.role === "user";
+                if (mine) {
+                  return (
+                    <li className="flex justify-end" key={message.id}>
+                      <div className="max-w-[85%] rounded-3xl bg-zinc-800 px-4 py-2.5 text-sm whitespace-pre-wrap">
+                        {message.content}
+                      </div>
+                    </li>
+                  );
+                }
+                if (message.content === "") {
+                  return (
+                    <li className="text-sm text-zinc-400" key={message.id}>
+                      The model did not reply.
+                    </li>
+                  );
+                }
                 return (
-                  <li
-                    className={`max-w-xl rounded-2xl px-4 py-3 text-sm whitespace-pre-wrap ${
-                      mine ? "ml-auto bg-white/10" : "mr-auto bg-zinc-800"
-                    }`}
-                    key={message.id}
-                  >
-                    {message.content}
-                    {message.status === "cancelled" ? (
-                      <span className="mt-1 block text-xs text-zinc-400">
-                        Stopped
-                      </span>
-                    ) : null}
+                  <li className="w-full" key={message.id}>
+                    <AssistantMarkdown text={message.content} />
+                    <div className="mt-2 flex items-center gap-3 text-xs text-zinc-500">
+                      {message.status === "cancelled" ? (
+                        <span>Stopped</span>
+                      ) : null}
+                      <CopyReply text={message.content} />
+                    </div>
                   </li>
                 );
               })}
-            {streaming &&
-            liveUser &&
-            !messages.data?.some(
-              (message) =>
-                message.role === "user" && message.content === liveUser,
-            ) ? (
-              <li className="ml-auto max-w-xl rounded-2xl bg-white/10 px-4 py-3 text-sm whitespace-pre-wrap">
-                {liveUser}
-              </li>
-            ) : null}
-            {streaming ? (
-              <li className="mr-auto max-w-xl rounded-2xl bg-zinc-800 px-4 py-3 text-sm whitespace-pre-wrap">
-                {liveAssistant || "…"}
-              </li>
-            ) : null}
-          </ul>
+              {streaming &&
+              liveUser &&
+              !messages.data?.some(
+                (message) =>
+                  message.role === "user" && message.content === liveUser,
+              ) ? (
+                <li className="flex justify-end">
+                  <div className="max-w-[85%] rounded-3xl bg-zinc-800 px-4 py-2.5 text-sm whitespace-pre-wrap">
+                    {liveUser}
+                  </div>
+                </li>
+              ) : null}
+              {streaming ? (
+                <li className="w-full">
+                  {liveAssistant ? (
+                    <AssistantMarkdown text={liveAssistant} />
+                  ) : (
+                    <p className="text-sm text-zinc-400" role="status">
+                      Thinking
+                    </p>
+                  )}
+                </li>
+              ) : null}
+            </ul>
+          </div>
         </div>
 
         <form
-          className="border-t border-white/10 p-4"
+          className="bg-zinc-950 px-4 pt-2 pb-4"
           onSubmit={(event) => {
             event.preventDefault();
             const content = draft.trim();
@@ -317,50 +394,54 @@ export function ChatScreen({ user }: ChatScreenProps) {
             void startStream(content);
           }}
         >
-          {error ? (
-            <p className="mb-2 text-sm text-red-300" role="alert">
-              {error}
-            </p>
-          ) : null}
-          <div className="flex gap-2">
-            <label className="sr-only" htmlFor="composer">
-              Message
-            </label>
-            <textarea
-              id="composer"
-              className="min-h-12 flex-1 resize-y rounded-xl border border-white/10 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-white/40"
-              placeholder="Write a message"
-              value={draft}
-              disabled={streaming}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-            />
-            {streaming ? (
-              <button
-                className="self-end rounded-xl bg-white px-4 py-2 text-sm font-medium text-zinc-950"
-                type="button"
-                onClick={() => abortRef.current?.abort()}
-              >
-                Stop
-              </button>
-            ) : (
-              <button
-                className="self-end rounded-xl bg-white px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-60"
-                type="submit"
-                disabled={draft.trim() === ""}
-              >
-                Send
-              </button>
-            )}
+          <div className="mx-auto w-full max-w-3xl">
+            {error ? (
+              <p className="mb-2 text-sm text-red-300" role="alert">
+                {error}
+              </p>
+            ) : null}
+            <div className="rounded-3xl border border-white/15 bg-zinc-900 px-4 py-3 shadow-2xl">
+              <label className="sr-only" htmlFor="composer">
+                Message
+              </label>
+              <textarea
+                id="composer"
+                className="max-h-48 min-h-12 w-full resize-none bg-transparent text-sm outline-none"
+                placeholder="Message"
+                value={draft}
+                disabled={streaming}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+              />
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <p className="text-xs text-zinc-500">
+                  Enter to send. Shift+Enter for a new line.
+                </p>
+                {streaming ? (
+                  <button
+                    className="rounded-full bg-white px-4 py-2 text-sm font-medium text-zinc-950"
+                    type="button"
+                    onClick={() => abortRef.current?.abort()}
+                  >
+                    Stop
+                  </button>
+                ) : (
+                  <button
+                    className="rounded-full bg-white px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-40"
+                    type="submit"
+                    disabled={draft.trim() === ""}
+                  >
+                    Send
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
-          <p className="mt-2 text-xs text-zinc-500">
-            Replies stream as they arrive. Stop keeps the text received so far.
-          </p>
         </form>
       </section>
     </div>
