@@ -55,6 +55,17 @@ export function createApiClient(baseUrl: string): AxiosInstance {
 
 let apiClient: AxiosInstance | null = null;
 
+export function apiBaseUrl(): string {
+  return readPublicEnv({
+    NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
+  }).NEXT_PUBLIC_API_BASE_URL;
+}
+
+export async function getCsrfToken(): Promise<string> {
+  const response = await getApiClient().get<CsrfResponse>("/api/v1/auth/csrf");
+  return response.data.csrf_token;
+}
+
 export function getApiClient(): AxiosInstance {
   if (!apiClient) {
     apiClient = createApiClient(

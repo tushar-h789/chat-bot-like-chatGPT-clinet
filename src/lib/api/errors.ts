@@ -9,5 +9,8 @@ export function apiErrorMessage(error: unknown): string {
       return body.error.message;
     }
   }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
   return "Something went wrong.";
 }

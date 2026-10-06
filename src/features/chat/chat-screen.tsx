@@ -1,12 +1,12 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { logout } from "@/lib/api/auth";
+import { streamChat } from "@/lib/api/chat";
 import {
   createConversation,
-  createMessage,
   deleteConversation,
   listConversations,
   listMessages,
@@ -32,6 +32,10 @@ export function ChatScreen({ user }: ChatScreenProps) {
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [streaming, setStreaming] = useState(false);
+  const [liveUser, setLiveUser] = useState<string | null>(null);
+  const [liveAssistant, setLiveAssistant] = useState("");
+  const abortRef = useRef<AbortController | null>(null);
 
   const conversations = useQuery({
     queryKey: ["conversations"],
@@ -87,19 +91,40 @@ export function ChatScreen({ user }: ChatScreenProps) {
     onError: fail,
   });
 
-  const send = useMutation({
-    mutationFn: (content: string) =>
-      createMessage(selectedConversationId as string, content),
-    onSuccess: async () => {
-      setError(null);
-      setDraft("");
-      await queryClient.invalidateQueries({
-        queryKey: ["messages", selectedConversationId],
+  async function startStream(content: string) {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setStreaming(true);
+    setLiveUser(content);
+    setLiveAssistant("");
+    setError(null);
+    setDraft("");
+    try {
+      await streamChat({
+        content,
+        conversationId: selectedConversationId,
+        signal: controller.signal,
+        onConversation: (conversation) => {
+          selectConversation(conversation.id);
+          void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+        },
+        onDelta: (text) => {
+          setLiveAssistant((current) => current + text);
+        },
       });
+    } catch (caught) {
+      if (!(caught instanceof DOMException && caught.name === "AbortError")) {
+        fail(caught);
+      }
+    } finally {
+      abortRef.current = null;
+      setStreaming(false);
+      setLiveUser(null);
+      setLiveAssistant("");
       await queryClient.invalidateQueries({ queryKey: ["conversations"] });
-    },
-    onError: fail,
-  });
+      await queryClient.invalidateQueries({ queryKey: ["messages"] });
+    }
+  }
 
   const signOut = useMutation({
     mutationFn: logout,
@@ -234,20 +259,50 @@ export function ChatScreen({ user }: ChatScreenProps) {
         </header>
 
         <div className="flex-1 space-y-3 overflow-y-auto px-4 py-6">
-          {selected && messages.data?.length === 0 ? (
+          {selected && messages.data?.length === 0 && !streaming ? (
             <p className="text-sm text-zinc-500">
-              Send a message to save it in this conversation.
+              Send a message to start this conversation.
             </p>
           ) : null}
           <ul className="space-y-3">
-            {messages.data?.map((message) => (
-              <li
-                className="ml-auto max-w-xl rounded-2xl bg-white/10 px-4 py-3 text-sm whitespace-pre-wrap"
-                key={message.id}
-              >
-                {message.content}
+            {messages.data
+              ?.filter(
+                (message) =>
+                  !(message.role === "assistant" && message.content === ""),
+              )
+              .map((message) => {
+                const mine = message.role === "user";
+                return (
+                  <li
+                    className={`max-w-xl rounded-2xl px-4 py-3 text-sm whitespace-pre-wrap ${
+                      mine ? "ml-auto bg-white/10" : "mr-auto bg-zinc-800"
+                    }`}
+                    key={message.id}
+                  >
+                    {message.content}
+                    {message.status === "cancelled" ? (
+                      <span className="mt-1 block text-xs text-zinc-400">
+                        Stopped
+                      </span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            {streaming &&
+            liveUser &&
+            !messages.data?.some(
+              (message) =>
+                message.role === "user" && message.content === liveUser,
+            ) ? (
+              <li className="ml-auto max-w-xl rounded-2xl bg-white/10 px-4 py-3 text-sm whitespace-pre-wrap">
+                {liveUser}
               </li>
-            ))}
+            ) : null}
+            {streaming ? (
+              <li className="mr-auto max-w-xl rounded-2xl bg-zinc-800 px-4 py-3 text-sm whitespace-pre-wrap">
+                {liveAssistant || "…"}
+              </li>
+            ) : null}
           </ul>
         </div>
 
@@ -256,10 +311,10 @@ export function ChatScreen({ user }: ChatScreenProps) {
           onSubmit={(event) => {
             event.preventDefault();
             const content = draft.trim();
-            if (!selectedConversationId || !content) {
+            if (streaming || !content) {
               return;
             }
-            send.mutate(content);
+            void startStream(content);
           }}
         >
           {error ? (
@@ -274,13 +329,9 @@ export function ChatScreen({ user }: ChatScreenProps) {
             <textarea
               id="composer"
               className="min-h-12 flex-1 resize-y rounded-xl border border-white/10 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-white/40"
-              placeholder={
-                selected
-                  ? "Write a message"
-                  : "Create a conversation before sending"
-              }
+              placeholder="Write a message"
               value={draft}
-              disabled={!selected}
+              disabled={streaming}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
@@ -289,17 +340,26 @@ export function ChatScreen({ user }: ChatScreenProps) {
                 }
               }}
             />
-            <button
-              className="self-end rounded-xl bg-white px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-60"
-              type="submit"
-              disabled={!selected || send.isPending || draft.trim() === ""}
-            >
-              Send
-            </button>
+            {streaming ? (
+              <button
+                className="self-end rounded-xl bg-white px-4 py-2 text-sm font-medium text-zinc-950"
+                type="button"
+                onClick={() => abortRef.current?.abort()}
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                className="self-end rounded-xl bg-white px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-60"
+                type="submit"
+                disabled={draft.trim() === ""}
+              >
+                Send
+              </button>
+            )}
           </div>
           <p className="mt-2 text-xs text-zinc-500">
-            Messages are saved to your account. Model replies arrive in a later
-            phase.
+            Replies stream as they arrive. Stop keeps the text received so far.
           </p>
         </form>
       </section>
