@@ -109,6 +109,8 @@ export function ChatScreen({ user }: ChatScreenProps) {
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const [liveFiles, setLiveFiles] = useState<AttachedFile[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [searchOn, setSearchOn] = useState(false);
+  const [liveSearch, setLiveSearch] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -202,12 +204,13 @@ export function ChatScreen({ user }: ChatScreenProps) {
     }
   }
 
-  async function startStream(content: string, files: AttachedFile[]) {
+  async function startStream(content: string, files: AttachedFile[], search: boolean) {
     const controller = new AbortController();
     abortRef.current = controller;
     setStreaming(true);
     setLiveUser(content);
     setLiveFiles(files);
+    setLiveSearch(search);
     setLiveAssistant("");
     setError(null);
     setDraft("");
@@ -217,6 +220,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
         content,
         conversationId: selectedConversationId,
         fileIds: files.map((file) => file.id),
+        webSearch: search,
         signal: controller.signal,
         onConversation: (conversation) => {
           selectConversation(conversation.id);
@@ -258,6 +262,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
       setRegeneratingId(null);
       setLiveUser(null);
       setLiveFiles([]);
+      setLiveSearch(false);
       setLiveAssistant("");
     }
   }
@@ -480,6 +485,9 @@ export function ChatScreen({ user }: ChatScreenProps) {
                     <li className="flex justify-end" key={message.id}>
                       <div className="max-w-[85%] rounded-3xl bg-zinc-800 px-4 py-2.5 text-sm">
                         <FileNames files={message.files ?? []} />
+                        {message.web_search ? (
+                          <p className="mb-1 text-xs text-zinc-400">Web</p>
+                        ) : null}
                         <p className="whitespace-pre-wrap">{message.content}</p>
                       </div>
                     </li>
@@ -541,6 +549,9 @@ export function ChatScreen({ user }: ChatScreenProps) {
                 <li className="flex justify-end">
                   <div className="max-w-[85%] rounded-3xl bg-zinc-800 px-4 py-2.5 text-sm">
                     <FileNames files={liveFiles} />
+                    {liveSearch ? (
+                      <p className="mb-1 text-xs text-zinc-400">Web</p>
+                    ) : null}
                     <p className="whitespace-pre-wrap">{liveUser}</p>
                   </div>
                 </li>
@@ -568,7 +579,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
             if (streaming || uploading || !content) {
               return;
             }
-            void startStream(content, attachments);
+            void startStream(content, attachments, searchOn);
           }}
         >
           <div className="mx-auto w-full max-w-3xl">
@@ -642,6 +653,19 @@ export function ChatScreen({ user }: ChatScreenProps) {
                     onClick={() => fileInputRef.current?.click()}
                   >
                     {uploading ? "Uploading" : "Attach"}
+                  </button>
+                  <button
+                    className={
+                      searchOn
+                        ? "rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-950 disabled:opacity-40"
+                        : "rounded-full border border-white/15 px-3 py-1 text-xs disabled:opacity-40"
+                    }
+                    type="button"
+                    aria-pressed={searchOn}
+                    disabled={streaming}
+                    onClick={() => setSearchOn((current) => !current)}
+                  >
+                    Search
                   </button>
                   <p className="text-xs text-zinc-500">
                     Enter to send. Shift+Enter for a new line.

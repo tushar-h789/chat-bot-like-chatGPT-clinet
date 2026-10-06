@@ -27,6 +27,7 @@ export type ChatMessage = {
   created_at: string;
   updated_at: string;
   files?: AttachedFile[];
+  web_search?: boolean;
 };
 
 export type ApiErrorBody = {

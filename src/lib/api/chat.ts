@@ -5,6 +5,7 @@ type StreamChatInput = {
   content: string;
   conversationId: string | null;
   fileIds?: string[];
+  webSearch?: boolean;
   signal: AbortSignal;
   onConversation: (conversation: { id: string; title: string }) => void;
   onDelta: (text: string) => void;
@@ -23,6 +24,7 @@ export async function streamChat(input: StreamChatInput): Promise<void> {
       content: input.content,
       conversation_id: input.conversationId,
       file_ids: input.fileIds ?? [],
+      web_search: input.webSearch ?? false,
     },
     input,
   );
