@@ -1,6 +1,52 @@
 # AI Chatbot frontend
 
-Next.js application. It will talk to the FastAPI backend. It never holds the OpenAI API key.
+Next.js application for a ChatGPT-style chat. It talks to the FastAPI backend and never holds the Gemini or OpenAI key.
+
+The page rules are in [Business rules](#business-rules). In the full project checkout the shared product rules are in [../docs/business-logic.md](../docs/business-logic.md).
+
+## Stack
+
+- Next.js 16 App Router, React 19, TypeScript
+- Tailwind CSS 4
+- TanStack Query for server data, Zustand for sidebar and composer state
+- Axios for JSON calls, with cookies. `fetch` plus `AbortController` for the chat stream
+- Zod for request parsing
+- `react-markdown`, `remark-gfm`, and Shiki for assistant replies
+- Vitest and Testing Library
+
+The interface is custom Tailwind. It does not use shadcn/ui.
+
+## Business rules
+
+Open the app at `http://localhost:3000`, not `127.0.0.1`, so the session cookie stays on `localhost` with the API.
+
+### Session
+
+The page signs in, registers, and logs out through the API. The browser stores no password and no model key. JSON writes send the CSRF header. Logout clears the cached usage and conversations.
+
+### Chat
+
+Send posts to `POST /api/v1/chat` and paints the reply as events arrive. Stop aborts that request. A sent reply stays after refresh.
+
+Assistant text renders as Markdown. Fenced code is highlighted, and a code block has its own Copy. User messages stay plain text. Raw HTML from the model is not rendered. An empty finished assistant message shows `The model did not reply.`
+
+A reply shows `Calculate` or `Current time` when the model called one of those functions, plus the result the server returned.
+
+Search stays on until it is turned off. The next messages then ask for web search. A user bubble shows `Web` when that message did.
+
+Regenerate is shown only on the latest assistant message, including an empty one, and only while nothing is streaming. It replaces that reply in place.
+
+### Attachments
+
+Attach uploads the file before send. One message can include up to 4 files. The composer says when the model will read attached text, images, or PDFs. The saved bubble keeps the typed text and the file names.
+
+### Voice
+
+Mic writes speech into the composer with the browser Web Speech API. Speak reads one assistant reply with speech synthesis. Neither uploads audio or starts a model call. Send, regenerate, and switching conversation stop both. If the browser has no speech API, the page says voice input is not available.
+
+### Usage
+
+When the API returns a daily cap, the sidebar shows today's tokens against that cap, for example `1,556 / 100,000 tokens today`. The count refreshes after a reply finishes. A cap of zero means the API omits the limit, and the sidebar hides the line.
 
 ## Setup
 
@@ -8,6 +54,12 @@ Next.js application. It will talk to the FastAPI backend. It never holds the Ope
 cd frontend
 npm install
 cp .env.example .env.local
+```
+
+`.env.local` needs the API origin:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ```
 
 ## Commands
@@ -20,6 +72,4 @@ npm test
 npm run build
 ```
 
-The dev server runs at http://localhost:3000. Open that host, not `127.0.0.1`, so the session cookie stays on `localhost` with the API.
-
-The sidebar shows today's token count against the daily cap. Mic writes speech into the composer. Speak reads an assistant reply aloud. Neither one uploads audio. A reply shows Calculate or Current time when the model calls one of those functions. The page signs in through the API, then lists, renames, and deletes conversations. Search turns on web search for the next messages until it is turned off. Regenerate replaces the latest assistant reply. Attach uploads a file before send. The composer says when text, an image, or a PDF will be read. Send posts to `POST /api/v1/chat` with `fetch` and shows the reply as it arrives. Assistant text renders as Markdown, and fenced code is highlighted. Stop aborts that request. Axios still handles the JSON routes. The browser never receives the OpenAI or Gemini key.
+`npm run dev` serves http://localhost:3000. The API must already be running. See `backend/README.md` in the project checkout.
