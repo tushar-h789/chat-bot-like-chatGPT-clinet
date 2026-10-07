@@ -2,7 +2,7 @@
 
 Next.js application for a ChatGPT-style chat. It talks to the FastAPI backend and never holds the Gemini or OpenAI key.
 
-The page rules are in [Business rules](#business-rules). In the full project checkout the shared product rules are in [../docs/business-logic.md](../docs/business-logic.md).
+The page rules are in [Business rules](#business-rules). The API repository documents the shared product rules.
 
 ## Stack
 
@@ -72,4 +72,4 @@ npm test
 npm run build
 ```
 
-`npm run dev` serves http://localhost:3000. The API must already be running. See `backend/README.md` in the project checkout.
+`npm run dev` serves http://localhost:3000. The API must already be running. `compose.prod.yaml` builds this web app and is not started from here. `.github/workflows/ci.yml` tests, typechecks, and lints this repository.
