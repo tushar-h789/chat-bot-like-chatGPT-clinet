@@ -18,4 +18,14 @@ describe("readPublicEnv", () => {
       NEXT_PUBLIC_API_BASE_URL: "",
     });
   });
+
+  it("treats a placeholder API base URL as the current origin", () => {
+    expect(
+      readPublicEnv({
+        NEXT_PUBLIC_API_BASE_URL: "undefined",
+      }),
+    ).toEqual({
+      NEXT_PUBLIC_API_BASE_URL: "",
+    });
+  });
 });

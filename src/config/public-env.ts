@@ -6,10 +6,24 @@ const publicEnvSchema = z.object({
 
 export type PublicEnv = z.infer<typeof publicEnvSchema>;
 
+function normalizeApiBaseUrl(value: string | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed || trimmed === "undefined" || trimmed === "null") {
+    return "";
+  }
+  return trimmed;
+}
+
 export function readPublicEnv(
   source: Record<string, string | undefined>,
 ): PublicEnv {
-  return publicEnvSchema.parse({
-    NEXT_PUBLIC_API_BASE_URL: source.NEXT_PUBLIC_API_BASE_URL ?? "",
+  const parsed = publicEnvSchema.safeParse({
+    NEXT_PUBLIC_API_BASE_URL: normalizeApiBaseUrl(
+      source.NEXT_PUBLIC_API_BASE_URL,
+    ),
   });
+  if (parsed.success) {
+    return parsed.data;
+  }
+  return { NEXT_PUBLIC_API_BASE_URL: "" };
 }
