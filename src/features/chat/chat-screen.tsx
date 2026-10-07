@@ -147,6 +147,14 @@ export function ChatScreen({ user }: ChatScreenProps) {
   const [liveTools, setLiveTools] = useState<ToolCall[]>([]);
   const [listening, setListening] = useState(false);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [voiceConversationId, setVoiceConversationId] = useState(
+    selectedConversationId,
+  );
+  if (voiceConversationId !== selectedConversationId) {
+    setVoiceConversationId(selectedConversationId);
+    setListening(false);
+    setSpeakingId(null);
+  }
   const abortRef = useRef<AbortController | null>(null);
   const recognitionRef = useRef<Dictation | null>(null);
   const draftBaseRef = useRef("");
@@ -429,8 +437,6 @@ export function ChatScreen({ user }: ChatScreenProps) {
   }
 
   useEffect(() => {
-    setListening(false);
-    setSpeakingId(null);
     return () => {
       recognitionRef.current?.stop();
       recognitionRef.current = null;
