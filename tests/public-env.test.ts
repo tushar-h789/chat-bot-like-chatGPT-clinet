@@ -13,7 +13,9 @@ describe("readPublicEnv", () => {
     });
   });
 
-  it("rejects a missing API base URL", () => {
-    expect(() => readPublicEnv({})).toThrow();
+  it("uses the current origin when the API base URL is omitted", () => {
+    expect(readPublicEnv({})).toEqual({
+      NEXT_PUBLIC_API_BASE_URL: "",
+    });
   });
 });
