@@ -2,7 +2,12 @@ export type User = {
   id: string;
   email: string;
   created_at: string;
+  is_admin?: boolean;
 };
+
+export function userIsAdmin(user: User | null | undefined): boolean {
+  return user?.is_admin === true;
+}
 
 export type Conversation = {
   id: string;

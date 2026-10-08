@@ -1,11 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { APP_NAME } from "@/config/brand";
 import { IconButton } from "@/features/chat/ui/icon-button";
 import { CloseIcon, PlusIcon, SearchIcon } from "@/features/chat/ui/icons";
-import type { Conversation, User } from "@/lib/api/types";
+import { userIsAdmin, type Conversation, type User } from "@/lib/api/types";
 import type { UsageSummary } from "@/lib/api/usage";
 
 type ChatSidebarProps = {
@@ -24,7 +25,11 @@ type ChatSidebarProps = {
 };
 
 function startOfDay(value: Date): number {
-  return new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  return new Date(
+    value.getFullYear(),
+    value.getMonth(),
+    value.getDate(),
+  ).getTime();
 }
 
 function groupLabel(updatedAt: string): string {
@@ -62,12 +67,13 @@ export function ChatSidebar({
   onSignOut,
 }: ChatSidebarProps) {
   const [query, setQuery] = useState("");
-
-  useEffect(() => {
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (!open) {
       setQuery("");
     }
-  }, [open]);
+  }
 
   useEffect(() => {
     if (!open) {
@@ -157,7 +163,10 @@ export function ChatSidebar({
             onChange={(event) => setQuery(event.target.value)}
           />
         </div>
-        <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2" aria-label="Conversations">
+        <nav
+          className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+          aria-label="Conversations"
+        >
           {loading ? (
             <p className="px-2 py-3 text-sm text-zinc-500">Loading</p>
           ) : null}
@@ -166,8 +175,13 @@ export function ChatSidebar({
               No conversations yet.
             </p>
           ) : null}
-          {!loading && conversations && conversations.length > 0 && groups.length === 0 ? (
-            <p className="px-2 py-3 text-sm text-zinc-500">No matching chats.</p>
+          {!loading &&
+          conversations &&
+          conversations.length > 0 &&
+          groups.length === 0 ? (
+            <p className="px-2 py-3 text-sm text-zinc-500">
+              No matching chats.
+            </p>
           ) : null}
           {groups.map((group) => (
             <div key={group.label} className="mb-3">
@@ -198,6 +212,14 @@ export function ChatSidebar({
         </nav>
         <div className="border-t border-white/10 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <p className="truncate text-xs text-zinc-400">{user.email}</p>
+          {userIsAdmin(user) ? (
+            <Link
+              href="/admin"
+              className="mt-2 inline-block text-sm text-zinc-200 underline-offset-4 hover:underline"
+            >
+              Admin
+            </Link>
+          ) : null}
           {usageRatio != null && limit != null ? (
             <div className="mt-2">
               <div

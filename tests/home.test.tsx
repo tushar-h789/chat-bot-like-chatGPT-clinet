@@ -57,6 +57,7 @@ describe("Home", () => {
       id: "user-1",
       email: "ada@example.com",
       created_at: "2026-10-06T15:40:00.000000Z",
+      is_admin: false,
     });
     vi.mocked(listConversations).mockResolvedValue([
       {
@@ -74,5 +75,23 @@ describe("Home", () => {
       await screen.findByRole("button", { name: "Phase 4 notes" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New chat" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Admin" })).not.toBeInTheDocument();
+  });
+
+  it("shows an admin link only for admins", async () => {
+    vi.mocked(fetchCurrentUser).mockResolvedValue({
+      id: "user-1",
+      email: "ada@example.com",
+      created_at: "2026-10-06T15:40:00.000000Z",
+      is_admin: true,
+    });
+    vi.mocked(listConversations).mockResolvedValue([]);
+
+    renderHome();
+
+    expect(await screen.findByRole("link", { name: "Admin" })).toHaveAttribute(
+      "href",
+      "/admin",
+    );
   });
 });
