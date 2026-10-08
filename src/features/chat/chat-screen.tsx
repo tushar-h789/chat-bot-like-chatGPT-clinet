@@ -4,7 +4,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { AssistantMarkdown } from "@/features/chat/assistant-markdown";
+import { ChatComposer } from "@/features/chat/composer";
+import { MessageActions } from "@/features/chat/message-actions";
+import { ChatSidebar } from "@/features/chat/sidebar";
+import { ThreadHeader } from "@/features/chat/thread-header";
 import { toolLabel } from "@/features/chat/tools";
+import { IconButton } from "@/features/chat/ui/icon-button";
+import { ArrowDownIcon } from "@/features/chat/ui/icons";
 import {
   speak,
   startDictation,
@@ -12,9 +18,7 @@ import {
   type Dictation,
 } from "@/features/chat/voice";
 import { logout } from "@/lib/api/auth";
-import { getUsage } from "@/lib/api/usage";
 import { streamChat, streamRegenerate } from "@/lib/api/chat";
-import { deleteFile, uploadFile } from "@/lib/api/files";
 import {
   createConversation,
   deleteConversation,
@@ -23,7 +27,9 @@ import {
   renameConversation,
 } from "@/lib/api/conversations";
 import { apiErrorMessage } from "@/lib/api/errors";
+import { deleteFile, uploadFile } from "@/lib/api/files";
 import type { AttachedFile, ToolCall, User } from "@/lib/api/types";
+import { getUsage } from "@/lib/api/usage";
 import { useUiStore } from "@/stores/ui-store";
 
 type ChatScreenProps = {
@@ -42,6 +48,12 @@ const IMAGE_MEDIA_TYPES = new Set([
   "image/webp",
   "image/gif",
 ]);
+
+const STARTERS = [
+  "Explain this like I'm new to it",
+  "Help me draft a short reply",
+  "Give me a concise summary",
+];
 
 function attachmentNote(files: AttachedFile[]): string {
   const parts = [
@@ -98,30 +110,6 @@ function ToolNotes({ calls }: { calls: ToolCall[] }) {
   );
 }
 
-function CopyReply({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      return;
-    }
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
-  }
-
-  return (
-    <button
-      className="hover:text-zinc-200"
-      type="button"
-      onClick={() => void copy()}
-    >
-      {copied ? "Copied" : "Copy reply"}
-    </button>
-  );
-}
-
 export function ChatScreen({ user }: ChatScreenProps) {
   const queryClient = useQueryClient();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
@@ -136,8 +124,9 @@ export function ChatScreen({ user }: ChatScreenProps) {
   const [uploading, setUploading] = useState(false);
   const [searchOn, setSearchOn] = useState(false);
   const [liveSearch, setLiveSearch] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
@@ -147,6 +136,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
   const [liveTools, setLiveTools] = useState<ToolCall[]>([]);
   const [listening, setListening] = useState(false);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [stickToBottom, setStickToBottom] = useState(true);
   const [voiceConversationId, setVoiceConversationId] = useState(
     selectedConversationId,
   );
@@ -154,6 +144,8 @@ export function ChatScreen({ user }: ChatScreenProps) {
     setVoiceConversationId(selectedConversationId);
     setListening(false);
     setSpeakingId(null);
+    setEditingTitle(false);
+    setHeaderMenuOpen(false);
   }
   const abortRef = useRef<AbortController | null>(null);
   const recognitionRef = useRef<Dictation | null>(null);
@@ -203,6 +195,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
       renameConversation(selectedConversationId as string, title),
     onSuccess: async () => {
       setError(null);
+      setEditingTitle(false);
       await queryClient.invalidateQueries({ queryKey: ["conversations"] });
     },
     onError: fail,
@@ -213,6 +206,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
     onSuccess: async () => {
       setError(null);
       setConfirmDeleteId(null);
+      setHeaderMenuOpen(false);
       setDraft("");
       selectConversation(null);
       await queryClient.invalidateQueries({ queryKey: ["conversations"] });
@@ -300,13 +294,36 @@ export function ChatScreen({ user }: ChatScreenProps) {
     setError(null);
   }
 
-  async function startStream(content: string, files: AttachedFile[], search: boolean) {
+  function saveTitle(value?: string) {
+    if (!selected) {
+      setEditingTitle(false);
+      return;
+    }
+    const next = (value ?? titleDraft).trim();
+    if (!next || next === selected.title) {
+      setTitleDrafts((current) => ({
+        ...current,
+        [selected.id]: selected.title,
+      }));
+      setEditingTitle(false);
+      return;
+    }
+    setTitleDrafts((current) => ({ ...current, [selected.id]: next }));
+    rename.mutate(next);
+  }
+
+  async function startStream(
+    content: string,
+    files: AttachedFile[],
+    search: boolean,
+  ) {
     stopDictation();
     stopSpeaking();
     setSpeakingId(null);
     const controller = new AbortController();
     abortRef.current = controller;
     setStreaming(true);
+    setStickToBottom(true);
     setLiveUser(content);
     setLiveFiles(files);
     setLiveSearch(search);
@@ -382,6 +399,7 @@ export function ChatScreen({ user }: ChatScreenProps) {
     const controller = new AbortController();
     abortRef.current = controller;
     setStreaming(true);
+    setStickToBottom(true);
     setRegeneratingId(messageId);
     setLiveUser(null);
     setLiveFiles([]);
@@ -446,11 +464,11 @@ export function ChatScreen({ user }: ChatScreenProps) {
 
   useEffect(() => {
     const scroller = scrollerRef.current;
-    if (!scroller) {
+    if (!scroller || !stickToBottom) {
       return;
     }
     scroller.scrollTo?.({ top: scroller.scrollHeight });
-  }, [messages.data, liveAssistant, liveUser, liveTools, streaming]);
+  }, [messages.data, liveAssistant, liveUser, liveTools, streaming, stickToBottom]);
 
   const signOut = useMutation({
     mutationFn: logout,
@@ -464,390 +482,271 @@ export function ChatScreen({ user }: ChatScreenProps) {
     onError: fail,
   });
 
+  const empty =
+    !streaming &&
+    (!selected || messages.data?.length === 0) &&
+    !messages.isLoading;
+
   return (
-    <div className="flex h-dvh">
-      <aside
-        className={`${sidebarOpen ? "flex" : "hidden"} absolute inset-y-0 left-0 z-10 w-72 flex-col border-r border-white/10 bg-zinc-950 md:static md:flex`}
-      >
-        <div className="flex items-center justify-between gap-2 border-b border-white/10 p-3">
-          <h1 className="text-sm font-semibold">AI Chatbot</h1>
-          <button
-            className="rounded-md border border-white/10 px-2 py-1 text-xs"
-            type="button"
-            onClick={() => create.mutate()}
-            disabled={create.isPending}
-          >
-            New chat
-          </button>
-        </div>
-        <nav className="flex-1 overflow-y-auto p-2" aria-label="Conversations">
-          {conversations.isLoading ? (
-            <p className="px-2 py-3 text-sm text-zinc-500">Loading</p>
-          ) : null}
-          {conversations.data?.length === 0 ? (
-            <p className="px-2 py-3 text-sm text-zinc-500">
-              No conversations yet.
-            </p>
-          ) : null}
-          <ul className="space-y-1">
-            {conversations.data?.map((conversation) => (
-              <li key={conversation.id}>
-                <button
-                  className={`w-full rounded-md px-2 py-2 text-left text-sm ${
-                    conversation.id === selectedConversationId
-                      ? "bg-white/10"
-                      : "hover:bg-white/5"
-                  }`}
-                  type="button"
-                  onClick={() => {
-                    setConfirmDeleteId(null);
-                    selectConversation(conversation.id);
-                  }}
-                >
-                  {conversation.title}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <div className="border-t border-white/10 p-3 pb-16">
-          <p className="truncate text-xs text-zinc-400">{user.email}</p>
-          {usage.data?.daily_token_limit != null ? (
-            <p className="mt-1 text-xs text-zinc-500">
-              {usage.data.tokens_today.toLocaleString("en-US")} /{" "}
-              {usage.data.daily_token_limit.toLocaleString("en-US")} tokens today
-            </p>
-          ) : null}
-          <button
-            className="mt-2 text-sm text-zinc-200 underline-offset-4 hover:underline"
-            type="button"
-            onClick={() => signOut.mutate()}
-            disabled={signOut.isPending}
-          >
-            Log out
-          </button>
-        </div>
-      </aside>
+    <div className="flex h-dvh overflow-hidden">
+      <ChatSidebar
+        open={sidebarOpen}
+        user={user}
+        usage={usage.data}
+        conversations={conversations.data}
+        loading={conversations.isLoading}
+        selectedId={selectedConversationId}
+        creating={create.isPending}
+        signingOut={signOut.isPending}
+        onClose={() => setSidebarOpen(false)}
+        onNewChat={() => create.mutate()}
+        onSelect={(conversationId) => {
+          setConfirmDeleteId(null);
+          selectConversation(conversationId);
+        }}
+        onSignOut={() => signOut.mutate()}
+      />
 
       <section className="flex min-w-0 flex-1 flex-col">
-        <header className="relative z-10 flex shrink-0 items-center gap-3 border-b border-white/10 bg-zinc-950 px-4 py-3">
-          <button
-            className="rounded-md border border-white/10 px-2 py-1 text-xs md:hidden"
-            type="button"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-          >
-            Conversations
-          </button>
-          {selected ? (
-            <form
-              className="flex min-w-0 flex-1 items-center gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                rename.mutate(titleDraft);
-              }}
-            >
-              <label className="sr-only" htmlFor="conversation-title">
-                Conversation title
-              </label>
-              <input
-                id="conversation-title"
-                className="min-w-0 flex-1 rounded-md border border-white/10 bg-transparent px-2 py-1 text-sm"
-                value={titleDraft}
-                onChange={(event) =>
-                  setTitleDrafts((current) => ({
-                    ...current,
-                    [selected.id]: event.target.value,
-                  }))
-                }
-              />
-              <button
-                className="rounded-md border border-white/10 px-2 py-1 text-xs"
-                type="submit"
-                disabled={rename.isPending}
-              >
-                Rename
-              </button>
-              {confirmDeleteId === selected.id ? (
-                <button
-                  className="rounded-md bg-red-500/20 px-2 py-1 text-xs text-red-200"
-                  type="button"
-                  onClick={() => remove.mutate()}
-                  disabled={remove.isPending}
-                >
-                  Confirm delete
-                </button>
-              ) : (
-                <button
-                  className="rounded-md border border-white/10 px-2 py-1 text-xs"
-                  type="button"
-                  onClick={() => setConfirmDeleteId(selected.id)}
-                >
-                  Delete
-                </button>
-              )}
-            </form>
-          ) : (
-            <p className="text-sm text-zinc-400">Start a conversation.</p>
-          )}
-        </header>
+        <ThreadHeader
+          title={selected?.title ?? null}
+          titleDraft={titleDraft}
+          editing={editingTitle}
+          menuOpen={headerMenuOpen}
+          confirmDelete={selected != null && confirmDeleteId === selected.id}
+          renaming={rename.isPending}
+          deleting={remove.isPending}
+          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+          onStartEdit={() => {
+            if (!selected) {
+              return;
+            }
+            setTitleDrafts((current) => ({
+              ...current,
+              [selected.id]: current[selected.id] ?? selected.title,
+            }));
+            setEditingTitle(true);
+          }}
+          onTitleChange={(value) => {
+            if (!selected) {
+              return;
+            }
+            setTitleDrafts((current) => ({ ...current, [selected.id]: value }));
+          }}
+          onSaveTitle={saveTitle}
+          onCancelEdit={() => {
+            if (selected) {
+              setTitleDrafts((current) => ({
+                ...current,
+                [selected.id]: selected.title,
+              }));
+            }
+            setEditingTitle(false);
+          }}
+          onToggleMenu={() => {
+            setHeaderMenuOpen((current) => !current);
+            setConfirmDeleteId(null);
+          }}
+          onCloseMenu={() => {
+            setHeaderMenuOpen(false);
+            setConfirmDeleteId(null);
+          }}
+          onAskDelete={() => {
+            if (selected) {
+              setConfirmDeleteId(selected.id);
+            }
+          }}
+          onConfirmDelete={() => remove.mutate()}
+        />
 
-        <div ref={scrollerRef} className="flex-1 overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
-            {!streaming &&
-            (!selected || messages.data?.length === 0) &&
-            !messages.isLoading ? (
-              <p className="py-16 text-center text-2xl font-medium tracking-tight text-zinc-200">
-                {selected
-                  ? "Send a message to start this conversation."
-                  : "What can I help with?"}
-              </p>
-            ) : null}
-            <ul className="flex flex-col gap-6">
-              {messages.data?.map((message, index, all) => {
-                const mine = message.role === "user";
-                const latestReply =
-                  !streaming &&
-                  index === all.length - 1 &&
-                  message.role === "assistant";
-                if (mine) {
-                  return (
-                    <li className="flex justify-end" key={message.id}>
-                      <div className="max-w-[85%] rounded-3xl bg-zinc-800 px-4 py-2.5 text-sm">
-                        <FileNames files={message.files ?? []} />
-                        {message.web_search ? (
-                          <p className="mb-1 text-xs text-zinc-400">Web</p>
+        <div className="relative min-h-0 flex-1">
+          <div
+            ref={scrollerRef}
+            className="h-full overflow-y-auto"
+            onScroll={(event) => {
+              const el = event.currentTarget;
+              const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+              setStickToBottom(gap < 96);
+            }}
+          >
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
+              {empty ? (
+                <div className="flex flex-col items-center gap-6 py-12">
+                  <p className="text-center text-2xl font-medium tracking-tight text-zinc-200">
+                    {selected
+                      ? "Send a message to start this conversation."
+                      : "What can I help with?"}
+                  </p>
+                  {!selected ? (
+                    <ul className="flex w-full max-w-md flex-col gap-2">
+                      {STARTERS.map((prompt) => (
+                        <li key={prompt}>
+                          <button
+                            type="button"
+                            className="h-11 w-full rounded-xl border border-white/10 px-4 text-left text-sm text-zinc-300 hover:bg-white/5"
+                            onClick={() => setDraft(prompt)}
+                          >
+                            {prompt}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+              <ul className="flex flex-col gap-6">
+                {messages.data?.map((message, index, all) => {
+                  const mine = message.role === "user";
+                  const latestReply =
+                    !streaming &&
+                    index === all.length - 1 &&
+                    message.role === "assistant";
+                  if (mine) {
+                    return (
+                      <li className="flex justify-end" key={message.id}>
+                        <div className="max-w-[min(85%,36rem)] rounded-3xl bg-zinc-800 px-4 py-2.5 text-sm">
+                          <FileNames files={message.files ?? []} />
+                          {message.web_search ? (
+                            <p className="mb-1 text-xs text-zinc-400">
+                              Web search
+                            </p>
+                          ) : null}
+                          <p className="whitespace-pre-wrap">
+                            {message.content}
+                          </p>
+                        </div>
+                      </li>
+                    );
+                  }
+                  const replacing = regeneratingId === message.id;
+                  const text = replacing ? liveAssistant : message.content;
+                  const calls = replacing
+                    ? liveTools
+                    : (message.tool_calls ?? []);
+                  if (!replacing && text === "" && calls.length === 0) {
+                    return (
+                      <li className="text-sm text-zinc-400" key={message.id}>
+                        <p>The model did not reply.</p>
+                        {latestReply ? (
+                          <MessageActions
+                            text=""
+                            speaking={false}
+                            canRegenerate
+                            onCopyError={setError}
+                            onSpeak={() => undefined}
+                            onRegenerate={() => void startRegenerate(message.id)}
+                          />
                         ) : null}
-                        <p className="whitespace-pre-wrap">{message.content}</p>
-                      </div>
-                    </li>
-                  );
-                }
-                const replacing = regeneratingId === message.id;
-                const text = replacing ? liveAssistant : message.content;
-                const calls = replacing ? liveTools : (message.tool_calls ?? []);
-                if (!replacing && text === "" && calls.length === 0) {
+                      </li>
+                    );
+                  }
                   return (
-                    <li className="text-sm text-zinc-400" key={message.id}>
-                      <p>The model did not reply.</p>
-                      {latestReply ? (
-                        <button
-                          className="mt-2 hover:text-zinc-200"
-                          type="button"
-                          onClick={() => void startRegenerate(message.id)}
+                    <li className="w-full" key={message.id}>
+                      <ToolNotes calls={calls} />
+                      {text ? (
+                        <AssistantMarkdown text={text} />
+                      ) : replacing ? (
+                        <p
+                          className="animate-pulse text-sm text-zinc-400"
+                          role="status"
                         >
-                          Regenerate
-                        </button>
-                      ) : null}
+                          Thinking
+                        </p>
+                      ) : (
+                        <p className="text-sm text-zinc-400">
+                          The model did not reply.
+                        </p>
+                      )}
+                      {replacing ? null : (
+                        <MessageActions
+                          text={text}
+                          speaking={speakingId === message.id}
+                          canRegenerate={latestReply}
+                          cancelled={message.status === "cancelled"}
+                          onCopyError={setError}
+                          onSpeak={() => toggleSpeak(message.id, text)}
+                          onRegenerate={() => void startRegenerate(message.id)}
+                        />
+                      )}
                     </li>
                   );
-                }
-                return (
-                  <li className="w-full" key={message.id}>
-                    <ToolNotes calls={calls} />
-                    {text ? (
-                      <AssistantMarkdown text={text} />
-                    ) : replacing ? (
-                      <p className="text-sm text-zinc-400" role="status">
+                })}
+                {streaming &&
+                liveUser &&
+                !messages.data?.some(
+                  (message) =>
+                    message.role === "user" && message.content === liveUser,
+                ) ? (
+                  <li className="flex justify-end">
+                    <div className="max-w-[min(85%,36rem)] rounded-3xl bg-zinc-800 px-4 py-2.5 text-sm">
+                      <FileNames files={liveFiles} />
+                      {liveSearch ? (
+                        <p className="mb-1 text-xs text-zinc-400">Web search</p>
+                      ) : null}
+                      <p className="whitespace-pre-wrap">{liveUser}</p>
+                    </div>
+                  </li>
+                ) : null}
+                {streaming && regeneratingId === null ? (
+                  <li className="w-full">
+                    <ToolNotes calls={liveTools} />
+                    {liveAssistant ? (
+                      <AssistantMarkdown text={liveAssistant} />
+                    ) : (
+                      <p
+                        className="animate-pulse text-sm text-zinc-400"
+                        role="status"
+                      >
                         Thinking
                       </p>
-                    ) : (
-                      <p className="text-sm text-zinc-400">The model did not reply.</p>
-                    )}
-                    {replacing ? null : (
-                      <div className="mt-2 flex items-center gap-3 text-xs text-zinc-500">
-                        {message.status === "cancelled" ? (
-                          <span>Stopped</span>
-                        ) : null}
-                        {text ? <CopyReply text={text} /> : null}
-                        {text ? (
-                          <button
-                            className="hover:text-zinc-200"
-                            type="button"
-                            onClick={() => toggleSpeak(message.id, text)}
-                          >
-                            {speakingId === message.id ? "Stop voice" : "Speak"}
-                          </button>
-                        ) : null}
-                        {latestReply ? (
-                          <button
-                            className="hover:text-zinc-200"
-                            type="button"
-                            onClick={() => void startRegenerate(message.id)}
-                          >
-                            Regenerate
-                          </button>
-                        ) : null}
-                      </div>
                     )}
                   </li>
-                );
-              })}
-              {streaming &&
-              liveUser &&
-              !messages.data?.some(
-                (message) =>
-                  message.role === "user" && message.content === liveUser,
-              ) ? (
-                <li className="flex justify-end">
-                  <div className="max-w-[85%] rounded-3xl bg-zinc-800 px-4 py-2.5 text-sm">
-                    <FileNames files={liveFiles} />
-                    {liveSearch ? (
-                      <p className="mb-1 text-xs text-zinc-400">Web</p>
-                    ) : null}
-                    <p className="whitespace-pre-wrap">{liveUser}</p>
-                  </div>
-                </li>
-              ) : null}
-              {streaming && regeneratingId === null ? (
-                <li className="w-full">
-                  <ToolNotes calls={liveTools} />
-                  {liveAssistant ? (
-                    <AssistantMarkdown text={liveAssistant} />
-                  ) : (
-                    <p className="text-sm text-zinc-400" role="status">
-                      Thinking
-                    </p>
-                  )}
-                </li>
-              ) : null}
-            </ul>
+                ) : null}
+              </ul>
+            </div>
           </div>
+          {!stickToBottom ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+              <IconButton
+                label="Jump to latest"
+                className="pointer-events-auto rounded-full border border-white/15 bg-zinc-900"
+                onClick={() => {
+                  setStickToBottom(true);
+                  scrollerRef.current?.scrollTo({
+                    top: scrollerRef.current.scrollHeight,
+                    behavior: "smooth",
+                  });
+                }}
+              >
+                <ArrowDownIcon />
+              </IconButton>
+            </div>
+          ) : null}
         </div>
 
-        <form
-          className="bg-zinc-950 px-4 pt-2 pb-4"
-          onSubmit={(event) => {
-            event.preventDefault();
+        <ChatComposer
+          draft={draft}
+          attachments={attachments}
+          attachmentNote={attachmentNote(attachments)}
+          error={error}
+          streaming={streaming}
+          uploading={uploading}
+          searchOn={searchOn}
+          listening={listening}
+          onDraftChange={setDraft}
+          onAttach={(file) => void attach(file)}
+          onDetach={(fileId) => void detach(fileId)}
+          onToggleSearch={() => setSearchOn((current) => !current)}
+          onToggleMic={toggleMic}
+          onStop={() => abortRef.current?.abort()}
+          onSubmit={() => {
             const content = draft.trim();
-            if (streaming || uploading || !content) {
+            if (!content) {
               return;
             }
             void startStream(content, attachments, searchOn);
           }}
-        >
-          <div className="mx-auto w-full max-w-3xl">
-            {error ? (
-              <p className="mb-2 text-sm text-red-300" role="alert">
-                {error}
-              </p>
-            ) : null}
-            <div className="rounded-3xl border border-white/15 bg-zinc-900 px-4 py-3 shadow-2xl">
-              {attachments.length > 0 ? (
-                <div className="mb-2">
-                  <ul className="flex flex-wrap gap-2">
-                    {attachments.map((file) => (
-                      <li
-                        className="flex items-center gap-2 rounded-full bg-zinc-800 px-3 py-1 text-xs"
-                        key={file.id}
-                      >
-                        <span>{file.name}</span>
-                        <button
-                          className="text-zinc-400 hover:text-zinc-100"
-                          type="button"
-                          aria-label={`Remove ${file.name}`}
-                          onClick={() => void detach(file.id)}
-                        >
-                          Remove
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="mt-2 text-xs text-zinc-500">
-                    {attachmentNote(attachments)}
-                  </p>
-                </div>
-              ) : null}
-              <label className="sr-only" htmlFor="composer">
-                Message
-              </label>
-              <textarea
-                id="composer"
-                className="max-h-48 min-h-12 w-full resize-none bg-transparent text-sm outline-none"
-                placeholder="Message"
-                value={draft}
-                disabled={streaming || listening}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-              />
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <input
-                    ref={fileInputRef}
-                    className="hidden"
-                    type="file"
-                    accept=".txt,.md,.csv,.json,.pdf,.png,.jpg,.jpeg,.webp,.gif"
-                    onChange={(event) => {
-                      const chosen = event.target.files?.[0];
-                      event.target.value = "";
-                      if (chosen) {
-                        void attach(chosen);
-                      }
-                    }}
-                  />
-                  <button
-                    className="rounded-full border border-white/15 px-3 py-1 text-xs disabled:opacity-40"
-                    type="button"
-                    disabled={streaming || uploading || attachments.length >= 4}
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    {uploading ? "Uploading" : "Attach"}
-                  </button>
-                  <button
-                    className={
-                      searchOn
-                        ? "rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-950 disabled:opacity-40"
-                        : "rounded-full border border-white/15 px-3 py-1 text-xs disabled:opacity-40"
-                    }
-                    type="button"
-                    aria-pressed={searchOn}
-                    disabled={streaming}
-                    onClick={() => setSearchOn((current) => !current)}
-                  >
-                    Search
-                  </button>
-                  <button
-                    className={
-                      listening
-                        ? "rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-950 disabled:opacity-40"
-                        : "rounded-full border border-white/15 px-3 py-1 text-xs disabled:opacity-40"
-                    }
-                    type="button"
-                    aria-pressed={listening}
-                    disabled={streaming}
-                    onClick={toggleMic}
-                  >
-                    {listening ? "Listening" : "Mic"}
-                  </button>
-                  <p className="text-xs text-zinc-500">
-                    Enter to send. Shift+Enter for a new line.
-                  </p>
-                </div>
-                {streaming ? (
-                  <button
-                    className="rounded-full bg-white px-4 py-2 text-sm font-medium text-zinc-950"
-                    type="button"
-                    onClick={() => abortRef.current?.abort()}
-                  >
-                    Stop
-                  </button>
-                ) : (
-                  <button
-                    className="rounded-full bg-white px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-40"
-                    type="submit"
-                    disabled={draft.trim() === "" || uploading}
-                  >
-                    Send
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </form>
+        />
       </section>
     </div>
   );
