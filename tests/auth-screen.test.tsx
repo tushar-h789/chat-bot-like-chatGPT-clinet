@@ -41,4 +41,24 @@ describe("AuthScreen", () => {
       "correct-horse-battery",
     );
   });
+
+  it("lets the visitor show and hide the password", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <AuthScreen
+        onLogin={vi.fn()}
+        onRegister={vi.fn()}
+      />,
+    );
+
+    const field = screen.getByLabelText("Password");
+    expect(field).toHaveAttribute("type", "password");
+
+    await user.click(screen.getByRole("button", { name: "Show password" }));
+    expect(field).toHaveAttribute("type", "text");
+
+    await user.click(screen.getByRole("button", { name: "Hide password" }));
+    expect(field).toHaveAttribute("type", "password");
+  });
 });

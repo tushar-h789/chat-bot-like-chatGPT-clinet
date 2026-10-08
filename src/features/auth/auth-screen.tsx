@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 
 import { APP_NAME } from "@/config/brand";
+import { EyeIcon, EyeOffIcon } from "@/features/chat/ui/icons";
 import { apiErrorMessage } from "@/lib/api/errors";
 
 type AuthMode = "login" | "register";
@@ -18,6 +19,7 @@ export function AuthScreen({ onLogin, onRegister }: AuthScreenProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -59,19 +61,30 @@ export function AuthScreen({ onLogin, onRegister }: AuthScreenProps) {
         </label>
         <label className="block text-sm">
           Password
-          <input
-            className="mt-1 w-full rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 outline-none focus:border-white/40"
-            type="password"
-            name="password"
-            autoComplete={
-              mode === "login" ? "current-password" : "new-password"
-            }
-            minLength={12}
-            maxLength={128}
-            required
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
+          <span className="relative mt-1 block">
+            <input
+              className="w-full rounded-lg border border-white/10 bg-zinc-900 py-2 pr-11 pl-3 outline-none focus:border-white/40"
+              type={showPassword ? "text" : "password"}
+              name="password"
+              autoComplete={
+                mode === "login" ? "current-password" : "new-password"
+              }
+              minLength={12}
+              maxLength={128}
+              required
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+            <button
+              className="absolute top-1/2 right-1.5 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md text-zinc-400 hover:bg-white/5 hover:text-zinc-100"
+              type="button"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-pressed={showPassword}
+              onClick={() => setShowPassword((current) => !current)}
+            >
+              {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
+          </span>
         </label>
         <p className="text-xs text-zinc-500">
           Use 12 to 128 characters.

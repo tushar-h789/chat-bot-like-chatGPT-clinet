@@ -146,3 +146,23 @@ export function ArrowDownIcon({ className = "h-5 w-5" }: IconProps) {
     </svg>
   );
 }
+
+export function EyeIcon({ className = "h-5 w-5" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden {...stroke}>
+      <path d="M3 12s3.5-6.5 9-6.5S21 12 21 12s-3.5 6.5-9 6.5S3 12 3 12z" />
+      <circle cx="12" cy="12" r="2.5" />
+    </svg>
+  );
+}
+
+export function EyeOffIcon({ className = "h-5 w-5" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden {...stroke}>
+      <path d="M4 5l16 14" />
+      <path d="M10.5 6.3A8.6 8.6 0 0 1 12 6c5.5 0 9 6 9 6a15 15 0 0 1-3.3 3.9" />
+      <path d="M7.1 8.2A14.7 14.7 0 0 0 3 12s3.5 6.5 9 6.5c1.2 0 2.3-.2 3.3-.6" />
+      <path d="M10.2 10.3a2.5 2.5 0 0 0 3.5 3.5" />
+    </svg>
+  );
+}
