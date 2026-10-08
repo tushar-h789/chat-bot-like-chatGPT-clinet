@@ -1,6 +1,6 @@
 # Tushar-AI ChatBot frontend
 
-Next.js application for a ChatGPT-style chat. It talks to the FastAPI backend and never holds the Gemini or OpenAI key.
+Tushar-AI ChatBot is a personal AI chat app. This Next.js client talks to our FastAPI backend and never holds the model API key.
 
 The page rules are in [Business rules](#business-rules). The API repository documents the shared product rules.
 
