@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { APP_NAME } from "@/config/brand";
 import { IconButton } from "@/features/chat/ui/icon-button";
 import { CloseIcon, PlusIcon, SearchIcon } from "@/features/chat/ui/icons";
 import type { Conversation, User } from "@/lib/api/types";
@@ -123,7 +124,7 @@ export function ChatSidebar({
         className={`${open ? "flex" : "hidden"} fixed inset-y-0 left-0 z-40 w-[min(20rem,86vw)] flex-col border-r border-white/10 bg-zinc-950 md:static md:z-0 md:flex md:w-72`}
       >
         <div className="flex items-center justify-between gap-2 px-3 pt-3 pb-2">
-          <h1 className="text-sm font-semibold">AI Chatbot</h1>
+          <h1 className="min-w-0 truncate text-sm font-semibold">{APP_NAME}</h1>
           <IconButton
             label="Close conversations"
             className="md:hidden"

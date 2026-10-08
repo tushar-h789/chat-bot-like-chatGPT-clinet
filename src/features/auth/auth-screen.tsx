@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
+import { APP_NAME } from "@/config/brand";
 import { apiErrorMessage } from "@/lib/api/errors";
 
 type AuthMode = "login" | "register";
@@ -39,7 +40,7 @@ export function AuthScreen({ onLogin, onRegister }: AuthScreenProps) {
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-6">
-      <h1 className="text-3xl font-semibold tracking-tight">AI Chatbot</h1>
+      <h1 className="text-3xl font-semibold tracking-tight">{APP_NAME}</h1>
       <p className="mt-2 text-sm text-zinc-400">
         Sign in to keep your conversations on this account.
       </p>

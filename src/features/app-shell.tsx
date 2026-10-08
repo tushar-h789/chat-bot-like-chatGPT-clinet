@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { APP_NAME } from "@/config/brand";
 import { AuthScreen } from "@/features/auth/auth-screen";
 import { ChatScreen } from "@/features/chat/chat-screen";
 import { fetchCurrentUser, login, register } from "@/lib/api/auth";
@@ -41,7 +42,7 @@ export function AppShell() {
   if (currentUser.isError) {
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center px-6">
-        <h1 className="text-3xl font-semibold tracking-tight">AI Chatbot</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">{APP_NAME}</h1>
         <p className="mt-3 text-sm text-red-300" role="alert">
           {apiErrorMessage(currentUser.error)} The API must be running at the
           address in NEXT_PUBLIC_API_BASE_URL.

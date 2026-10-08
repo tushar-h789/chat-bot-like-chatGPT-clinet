@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 
+import { APP_NAME } from "@/config/brand";
 import { Providers } from "@/app/providers";
 
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI Chatbot",
+  title: APP_NAME,
+  applicationName: APP_NAME,
   description: "A chat application with conversations saved on your account.",
 };
 

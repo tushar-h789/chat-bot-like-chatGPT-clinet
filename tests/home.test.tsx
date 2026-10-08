@@ -48,7 +48,7 @@ describe("Home", () => {
       await screen.findByRole("button", { name: "Sign in" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "AI Chatbot" }),
+      screen.getByRole("heading", { name: "Tushar-AI ChatBot" }),
     ).toBeInTheDocument();
   });
 
