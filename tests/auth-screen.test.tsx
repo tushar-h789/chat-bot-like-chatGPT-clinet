@@ -29,9 +29,7 @@ describe("AuthScreen", () => {
     const onRegister = vi.fn().mockResolvedValue(undefined);
 
     render(<AuthScreen onLogin={onLogin} onRegister={onRegister} />);
-    await user.click(
-      screen.getByRole("button", { name: "Need an account? Create one" }),
-    );
+    await user.click(screen.getByRole("tab", { name: "Create account" }));
     await user.type(screen.getByLabelText("Email"), "ada@example.com");
     await user.type(screen.getByLabelText("Password"), "correct-horse-battery");
     await user.click(screen.getByRole("button", { name: "Create account" }));

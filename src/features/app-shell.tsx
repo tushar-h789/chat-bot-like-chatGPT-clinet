@@ -34,19 +34,21 @@ export function AppShell() {
   if (currentUser.isLoading) {
     return (
       <main className="flex min-h-dvh items-center justify-center">
-        <p className="text-sm text-zinc-400">Loading</p>
+        <p className="text-sm text-zinc-500">Loading</p>
       </main>
     );
   }
 
   if (currentUser.isError) {
     return (
-      <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center px-6">
-        <h1 className="text-3xl font-semibold tracking-tight">{APP_NAME}</h1>
-        <p className="mt-3 text-sm text-red-300" role="alert">
-          {apiErrorMessage(currentUser.error)} The API must be running at the
-          address in NEXT_PUBLIC_API_BASE_URL.
-        </p>
+      <main className="flex min-h-dvh items-center justify-center px-4">
+        <div className="w-full max-w-md rounded-3xl border border-white/15 bg-zinc-900 p-6 sm:p-8">
+          <h1 className="text-xl font-semibold tracking-tight">{APP_NAME}</h1>
+          <p className="mt-3 rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-sm text-red-200" role="alert">
+            {apiErrorMessage(currentUser.error)} The API must be running at the
+            address in NEXT_PUBLIC_API_BASE_URL.
+          </p>
+        </div>
       </main>
     );
   }
