@@ -11,6 +11,16 @@ body {
   color: #fafafa;
 }
 
+button:not(:disabled),
+[role="tab"]:not(:disabled),
+[role="menuitem"]:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 :focus-visible {
   outline: 2px solid rgb(255 255 255 / 0.45);
   outline-offset: 2px;
